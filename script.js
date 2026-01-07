@@ -1,13 +1,27 @@
 // 从localStorage加载网站列表
 let sites = JSON.parse(localStorage.getItem('sites')) || [];
 
+// Gist配置
+const GIST_FILENAME = 'navigation-station.json';
+let gistId = localStorage.getItem('gistId') || null;
+let githubToken = localStorage.getItem('githubToken') || null;
+
 // DOM元素
 const sitesContainer = document.getElementById('sitesContainer');
 const toggleAddBtn = document.getElementById('toggleAddBtn');
+const settingsBtn = document.getElementById('settingsBtn');
 const addForm = document.getElementById('addForm');
+const settingsForm = document.getElementById('settingsForm');
 const nameInput = document.getElementById('nameInput');
 const urlInput = document.getElementById('urlInput');
 const addBtn = document.getElementById('addBtn');
+const githubTokenInput = document.getElementById('githubTokenInput');
+const saveTokenBtn = document.getElementById('saveTokenBtn');
+const syncFromGistBtn = document.getElementById('syncFromGistBtn');
+const syncToGistBtn = document.getElementById('syncToGistBtn');
+const clearTokenBtn = document.getElementById('clearTokenBtn');
+const syncStatus = document.getElementById('syncStatus');
+const gistStatus = document.getElementById('gistStatus');
 
 // 拖拽相关变量
 let isDragging = false;
@@ -19,11 +33,32 @@ let currentIndex = -1;
 // 初始化
 renderSites();
 initDragAndDrop();
+updateSyncStatus();
+loadTokenFromStorage();
 
 // 切换添加表单
 toggleAddBtn.addEventListener('click', () => {
     addForm.classList.toggle('hidden');
+    if (!addForm.classList.contains('hidden')) {
+        settingsForm.classList.add('hidden');
+    }
 });
+
+// 切换设置表单
+settingsBtn.addEventListener('click', () => {
+    settingsForm.classList.toggle('hidden');
+    if (!settingsForm.classList.contains('hidden')) {
+        addForm.classList.add('hidden');
+    }
+});
+
+// 保存Token
+saveTokenBtn.addEventListener('click', saveToken);
+
+// 同步操作
+syncFromGistBtn.addEventListener('click', syncFromGist);
+syncToGistBtn.addEventListener('click', syncToGist);
+clearTokenBtn.addEventListener('click', clearToken);
 
 // 添加网站
 addBtn.addEventListener('click', addSite);
@@ -224,6 +259,298 @@ function deleteSite(index) {
 // 保存网站列表
 function saveSites() {
     localStorage.setItem('sites', JSON.stringify(sites));
+    // 如果已配置Token，自动同步到Gist
+    if (githubToken) {
+        syncToGist(true); // 静默同步
+    }
+}
+
+// 加载Token
+function loadTokenFromStorage() {
+    if (githubToken) {
+        githubTokenInput.value = '••••••••••••';
+    }
+}
+
+// 保存Token
+function saveToken() {
+    const token = githubTokenInput.value.trim();
+    if (!token) {
+        showGistStatus('请输入Token', 'error');
+        return;
+    }
+    
+    if (token === '••••••••••••') {
+        showGistStatus('Token已保存', 'success');
+        return;
+    }
+    
+    githubToken = token;
+    localStorage.setItem('githubToken', token);
+    githubTokenInput.value = '••••••••••••';
+    showGistStatus('Token已保存', 'success');
+    
+    // 测试Token并创建/获取Gist
+    testTokenAndCreateGist();
+}
+
+// 测试Token并创建Gist
+async function testTokenAndCreateGist() {
+    try {
+        setSyncStatus('正在验证Token...', 'syncing');
+        
+        // 测试Token是否有效
+        const response = await fetch('https://api.github.com/user', {
+            headers: {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Token无效');
+        }
+        
+        // 查找或创建Gist
+        if (gistId) {
+            // 检查Gist是否存在
+            const gistResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            
+            if (!gistResponse.ok) {
+                gistId = null;
+                localStorage.removeItem('gistId');
+            }
+        }
+        
+        if (!gistId) {
+            // 创建新Gist
+            const createResponse = await fetch('https://api.github.com/gists', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: 'Navigation Station Data',
+                    public: false,
+                    files: {
+                        [GIST_FILENAME]: {
+                            content: JSON.stringify(sites, null, 2)
+                        }
+                    }
+                })
+            });
+            
+            if (createResponse.ok) {
+                const gist = await createResponse.json();
+                gistId = gist.id;
+                localStorage.setItem('gistId', gistId);
+                setSyncStatus('已连接到云端', 'success');
+                showGistStatus('Gist创建成功，已连接到云端', 'success');
+            } else {
+                throw new Error('创建Gist失败');
+            }
+        } else {
+            setSyncStatus('已连接到云端', 'success');
+            showGistStatus('Token验证成功，已连接到云端', 'success');
+        }
+    } catch (error) {
+        setSyncStatus('连接失败', 'error');
+        showGistStatus('错误: ' + error.message, 'error');
+    }
+}
+
+// 从Gist同步
+async function syncFromGist() {
+    if (!githubToken) {
+        showGistStatus('请先保存Token', 'error');
+        return;
+    }
+    
+    try {
+        setSyncStatus('正在同步...', 'syncing');
+        
+        if (!gistId) {
+            // 尝试查找用户的Gist
+            const response = await fetch('https://api.github.com/gists', {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('无法获取Gist列表');
+            }
+            
+            const gists = await response.json();
+            const targetGist = gists.find(g => g.files[GIST_FILENAME]);
+            
+            if (targetGist) {
+                gistId = targetGist.id;
+                localStorage.setItem('gistId', gistId);
+            } else {
+                throw new Error('未找到同步数据，请先同步到云端');
+            }
+        }
+        
+        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+            headers: {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('无法获取Gist数据');
+        }
+        
+        const gist = await response.json();
+        const file = gist.files[GIST_FILENAME];
+        
+        if (!file) {
+            throw new Error('Gist中未找到数据文件');
+        }
+        
+        const remoteSites = JSON.parse(file.content);
+        sites = remoteSites;
+        saveSites();
+        renderSites();
+        initDragAndDrop();
+        
+        setSyncStatus('同步成功', 'success');
+        showGistStatus('已从云端同步数据', 'success');
+    } catch (error) {
+        setSyncStatus('同步失败', 'error');
+        showGistStatus('错误: ' + error.message, 'error');
+    }
+}
+
+// 同步到Gist
+async function syncToGist(silent = false) {
+    if (!githubToken) {
+        if (!silent) {
+            showGistStatus('请先保存Token', 'error');
+        }
+        return;
+    }
+    
+    try {
+        if (!silent) {
+            setSyncStatus('正在同步...', 'syncing');
+        }
+        
+        if (!gistId) {
+            // 创建新Gist
+            const createResponse = await fetch('https://api.github.com/gists', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: 'Navigation Station Data',
+                    public: false,
+                    files: {
+                        [GIST_FILENAME]: {
+                            content: JSON.stringify(sites, null, 2)
+                        }
+                    }
+                })
+            });
+            
+            if (createResponse.ok) {
+                const gist = await createResponse.json();
+                gistId = gist.id;
+                localStorage.setItem('gistId', gistId);
+            } else {
+                throw new Error('创建Gist失败');
+            }
+        } else {
+            // 更新现有Gist
+            const updateResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    files: {
+                        [GIST_FILENAME]: {
+                            content: JSON.stringify(sites, null, 2)
+                        }
+                    }
+                })
+            });
+            
+            if (!updateResponse.ok) {
+                throw new Error('更新Gist失败');
+            }
+        }
+        
+        if (!silent) {
+            setSyncStatus('同步成功', 'success');
+            showGistStatus('已同步到云端', 'success');
+        }
+    } catch (error) {
+        if (!silent) {
+            setSyncStatus('同步失败', 'error');
+            showGistStatus('错误: ' + error.message, 'error');
+        }
+    }
+}
+
+// 清除Token
+function clearToken() {
+    if (!confirm('确定要清除Token吗？清除后将无法同步数据。')) {
+        return;
+    }
+    
+    githubToken = null;
+    gistId = null;
+    localStorage.removeItem('githubToken');
+    localStorage.removeItem('gistId');
+    githubTokenInput.value = '';
+    setSyncStatus('', '');
+    showGistStatus('Token已清除', 'success');
+}
+
+// 更新同步状态
+function updateSyncStatus() {
+    if (githubToken && gistId) {
+        setSyncStatus('已连接', 'success');
+    } else if (githubToken) {
+        setSyncStatus('未连接', '');
+    } else {
+        setSyncStatus('', '');
+    }
+}
+
+// 设置同步状态
+function setSyncStatus(text, type) {
+    syncStatus.textContent = text;
+    syncStatus.className = 'sync-status ' + type;
+}
+
+// 显示Gist状态
+function showGistStatus(message, type) {
+    gistStatus.textContent = message;
+    gistStatus.className = 'gist-status ' + type;
+    
+    if (type === 'success' || type === 'error') {
+        setTimeout(() => {
+            gistStatus.textContent = '';
+            gistStatus.className = 'gist-status';
+        }, 3000);
+    }
 }
 
 // HTML转义

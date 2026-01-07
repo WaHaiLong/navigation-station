@@ -13,7 +13,11 @@
         </div>
 
         <div class="add-section">
-            <button id="toggleAddBtn" class="btn btn-secondary">添加网站</button>
+            <div class="action-buttons">
+                <button id="toggleAddBtn" class="btn btn-secondary">添加网站</button>
+                <button id="settingsBtn" class="btn btn-secondary">⚙️ 设置</button>
+                <span id="syncStatus" class="sync-status"></span>
+            </div>
             <div id="addForm" class="add-form hidden">
                 <div class="input-group">
                     <input 
@@ -29,6 +33,36 @@
                         autocomplete="off"
                     >
                     <button id="addBtn" class="btn btn-primary">添加</button>
+                </div>
+            </div>
+            <div id="settingsForm" class="add-form hidden">
+                <div class="settings-content">
+                    <h3>GitHub Gist 同步设置</h3>
+                    <p class="settings-desc">使用 GitHub Gist 可以在不同浏览器间同步数据</p>
+                    <div class="input-group">
+                        <input 
+                            type="password" 
+                            id="githubTokenInput" 
+                            placeholder="GitHub Personal Access Token"
+                            autocomplete="off"
+                        >
+                        <button id="saveTokenBtn" class="btn btn-primary">保存Token</button>
+                    </div>
+                    <div class="input-group" style="margin-top: 10px;">
+                        <button id="syncFromGistBtn" class="btn btn-secondary">从云端同步</button>
+                        <button id="syncToGistBtn" class="btn btn-secondary">同步到云端</button>
+                        <button id="clearTokenBtn" class="btn btn-danger">清除Token</button>
+                    </div>
+                    <div id="gistStatus" class="gist-status"></div>
+                    <div class="help-text">
+                        <p><strong>如何获取 Token：</strong></p>
+                        <ol>
+                            <li>访问 <a href="https://github.com/settings/tokens" target="_blank">GitHub Settings → Developer settings → Personal access tokens</a></li>
+                            <li>点击 "Generate new token (classic)"</li>
+                            <li>勾选 <code>gist</code> 权限</li>
+                            <li>生成并复制 Token</li>
+                        </ol>
+                    </div>
                 </div>
             </div>
         </div>
