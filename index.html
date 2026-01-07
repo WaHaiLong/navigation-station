@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>导航站 - 我的主页</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="sites-container" id="sitesContainer">
+            <!-- 网站卡片将通过JavaScript动态生成 -->
+        </div>
+
+        <div class="add-section">
+            <button id="toggleAddBtn" class="btn btn-secondary">添加网站</button>
+            <div id="addForm" class="add-form hidden">
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="nameInput" 
+                        placeholder="网站名称"
+                        autocomplete="off"
+                    >
+                    <input 
+                        type="text" 
+                        id="urlInput" 
+                        placeholder="网址，例如：https://www.example.com"
+                        autocomplete="off"
+                    >
+                    <button id="addBtn" class="btn btn-primary">添加</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
