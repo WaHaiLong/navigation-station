@@ -30,11 +30,18 @@ let offsetX = 0;
 let offsetY = 0;
 let currentIndex = -1;
 
+// 自动同步相关变量
+let autoSyncTimer = null;
+let autoSyncDebounceTimer = null;
+const AUTO_SYNC_INTERVAL = 30000; // 30秒自动同步一次
+const AUTO_SYNC_DEBOUNCE = 2000; // 2秒防抖
+
 // 初始化
 renderSites();
 initDragAndDrop();
 updateSyncStatus();
 loadTokenFromStorage();
+initAutoSync();
 
 // 切换添加表单
 toggleAddBtn.addEventListener('click', () => {
@@ -264,9 +271,68 @@ function deleteSite(index) {
 // 保存网站列表
 function saveSites() {
     localStorage.setItem('sites', JSON.stringify(sites));
-    // 如果已配置Token，自动同步到Gist
+    // 如果已配置Token，自动同步到Gist（带防抖）
     if (githubToken) {
+        autoSyncToGist();
+    }
+}
+
+// 自动同步到Gist（带防抖）
+function autoSyncToGist() {
+    // 清除之前的防抖定时器
+    if (autoSyncDebounceTimer) {
+        clearTimeout(autoSyncDebounceTimer);
+    }
+    
+    // 设置新的防抖定时器
+    autoSyncDebounceTimer = setTimeout(() => {
         syncToGist(true); // 静默同步
+    }, AUTO_SYNC_DEBOUNCE);
+}
+
+// 初始化自动同步
+function initAutoSync() {
+    // 页面加载时，如果已配置Token，自动从云端同步
+    if (githubToken && gistId) {
+        // 延迟一下，确保页面已加载完成
+        setTimeout(() => {
+            syncFromGist(true); // 静默同步
+        }, 1000);
+    }
+    
+    // 设置定期自动同步
+    if (githubToken) {
+        startPeriodicSync();
+    }
+}
+
+// 开始定期自动同步
+function startPeriodicSync() {
+    // 清除之前的定时器
+    if (autoSyncTimer) {
+        clearInterval(autoSyncTimer);
+    }
+    
+    // 设置定期同步
+    autoSyncTimer = setInterval(() => {
+        if (githubToken) {
+            // 先尝试从云端同步（获取最新数据）
+            syncFromGist(true).then(() => {
+                // 然后同步本地数据到云端（如果有更新）
+                syncToGist(true);
+            }).catch(() => {
+                // 如果拉取失败，至少尝试推送本地数据
+                syncToGist(true);
+            });
+        }
+    }, AUTO_SYNC_INTERVAL);
+}
+
+// 停止定期自动同步
+function stopPeriodicSync() {
+    if (autoSyncTimer) {
+        clearInterval(autoSyncTimer);
+        autoSyncTimer = null;
     }
 }
 
@@ -296,7 +362,10 @@ function saveToken() {
     showGistStatus('Token已保存', 'success');
     
     // 测试Token并创建/获取Gist
-    testTokenAndCreateGist();
+    testTokenAndCreateGist().then(() => {
+        // Token验证成功后，启动自动同步
+        initAutoSync();
+    });
 }
 
 // 测试Token并创建Gist
@@ -365,21 +434,27 @@ async function testTokenAndCreateGist() {
             setSyncStatus('已连接到云端', 'success');
             showGistStatus('Token验证成功，已连接到云端', 'success');
         }
+        return true;
     } catch (error) {
         setSyncStatus('连接失败', 'error');
         showGistStatus('错误: ' + error.message, 'error');
+        return false;
     }
 }
 
 // 从Gist同步
-async function syncFromGist() {
+async function syncFromGist(silent = false) {
     if (!githubToken) {
-        showGistStatus('请先保存Token', 'error');
+        if (!silent) {
+            showGistStatus('请先保存Token', 'error');
+        }
         return;
     }
     
     try {
-        setSyncStatus('正在同步...', 'syncing');
+        if (!silent) {
+            setSyncStatus('正在同步...', 'syncing');
+        }
         
         if (!gistId) {
             // 尝试查找用户的Gist
@@ -447,11 +522,22 @@ async function syncFromGist() {
         renderSites();
         initDragAndDrop();
         
-        setSyncStatus('同步成功', 'success');
-        showGistStatus(`已从云端同步 ${sites.length} 个网站`, 'success');
+        if (!silent) {
+            setSyncStatus('同步成功', 'success');
+            showGistStatus(`已从云端同步 ${sites.length} 个网站`, 'success');
+        } else {
+            // 静默同步时，只更新状态，不显示提示
+            setSyncStatus('已连接', 'success');
+        }
+        return true;
     } catch (error) {
-        setSyncStatus('同步失败', 'error');
-        showGistStatus('错误: ' + error.message, 'error');
+        if (!silent) {
+            setSyncStatus('同步失败', 'error');
+            showGistStatus('错误: ' + error.message, 'error');
+        } else {
+            setSyncStatus('同步失败', 'error');
+        }
+        return false;
     }
 }
 
@@ -569,6 +655,13 @@ function clearToken() {
     githubTokenInput.value = '';
     setSyncStatus('', '');
     showGistStatus('Token已清除', 'success');
+    
+    // 停止自动同步
+    stopPeriodicSync();
+    if (autoSyncDebounceTimer) {
+        clearTimeout(autoSyncDebounceTimer);
+        autoSyncDebounceTimer = null;
+    }
 }
 
 // 更新同步状态
