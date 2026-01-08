@@ -188,13 +188,18 @@ function handleMouseUp(e) {
     currentCard.style.zIndex = '';
     
     // 保存位置
-    const x = parseInt(currentCard.style.left);
-    const y = parseInt(currentCard.style.top);
+    const x = parseInt(currentCard.style.left) || 0;
+    const y = parseInt(currentCard.style.top) || 0;
     
     if (sites[currentIndex]) {
         sites[currentIndex].x = x;
         sites[currentIndex].y = y;
-        saveSites();
+        // 立即保存到localStorage
+        localStorage.setItem('sites', JSON.stringify(sites));
+        // 然后尝试同步到Gist（如果已配置）
+        if (githubToken) {
+            syncToGist(true); // 静默同步
+        }
     }
     
     currentCard = null;
@@ -419,13 +424,31 @@ async function syncFromGist() {
         }
         
         const remoteSites = JSON.parse(file.content);
-        sites = remoteSites;
-        saveSites();
+        
+        // 验证数据格式，确保位置信息存在
+        const validatedSites = remoteSites.map((site, index) => {
+            // 确保每个站点都有必要的数据
+            if (!site.name || !site.url) {
+                console.warn('站点数据不完整:', site);
+                return null;
+            }
+            // 确保位置数据是数字类型
+            if (site.x !== undefined) site.x = Number(site.x);
+            if (site.y !== undefined) site.y = Number(site.y);
+            return site;
+        }).filter(site => site !== null);
+        
+        sites = validatedSites;
+        
+        // 先保存到localStorage
+        localStorage.setItem('sites', JSON.stringify(sites));
+        
+        // 然后重新渲染
         renderSites();
         initDragAndDrop();
         
         setSyncStatus('同步成功', 'success');
-        showGistStatus('已从云端同步数据', 'success');
+        showGistStatus(`已从云端同步 ${sites.length} 个网站`, 'success');
     } catch (error) {
         setSyncStatus('同步失败', 'error');
         showGistStatus('错误: ' + error.message, 'error');
@@ -438,13 +461,26 @@ async function syncToGist(silent = false) {
         if (!silent) {
             showGistStatus('请先保存Token', 'error');
         }
-        return;
+        return false;
     }
     
     try {
         if (!silent) {
             setSyncStatus('正在同步...', 'syncing');
         }
+        
+        // 确保保存了位置数据
+        const sitesWithPositions = sites.map(site => {
+            // 如果位置未定义，尝试从DOM获取
+            if (site.x === undefined || site.y === undefined) {
+                const card = document.querySelector(`[data-index="${sites.indexOf(site)}"]`);
+                if (card) {
+                    site.x = parseInt(card.style.left) || site.x;
+                    site.y = parseInt(card.style.top) || site.y;
+                }
+            }
+            return site;
+        });
         
         if (!gistId) {
             // 创建新Gist
@@ -460,7 +496,7 @@ async function syncToGist(silent = false) {
                     public: false,
                     files: {
                         [GIST_FILENAME]: {
-                            content: JSON.stringify(sites, null, 2)
+                            content: JSON.stringify(sitesWithPositions, null, 2)
                         }
                     }
                 })
@@ -471,7 +507,8 @@ async function syncToGist(silent = false) {
                 gistId = gist.id;
                 localStorage.setItem('gistId', gistId);
             } else {
-                throw new Error('创建Gist失败');
+                const errorData = await createResponse.json().catch(() => ({}));
+                throw new Error(errorData.message || '创建Gist失败');
             }
         } else {
             // 更新现有Gist
@@ -485,26 +522,37 @@ async function syncToGist(silent = false) {
                 body: JSON.stringify({
                     files: {
                         [GIST_FILENAME]: {
-                            content: JSON.stringify(sites, null, 2)
+                            content: JSON.stringify(sitesWithPositions, null, 2)
                         }
                     }
                 })
             });
             
             if (!updateResponse.ok) {
-                throw new Error('更新Gist失败');
+                const errorData = await updateResponse.json().catch(() => ({}));
+                throw new Error(errorData.message || '更新Gist失败');
             }
         }
+        
+        // 更新本地数据，确保位置信息已保存
+        sites = sitesWithPositions;
+        localStorage.setItem('sites', JSON.stringify(sites));
         
         if (!silent) {
             setSyncStatus('同步成功', 'success');
             showGistStatus('已同步到云端', 'success');
         }
+        return true;
     } catch (error) {
+        console.error('同步失败:', error);
         if (!silent) {
             setSyncStatus('同步失败', 'error');
             showGistStatus('错误: ' + error.message, 'error');
+        } else {
+            // 静默同步失败时，至少更新状态提示
+            setSyncStatus('同步失败', 'error');
         }
+        return false;
     }
 }
 
